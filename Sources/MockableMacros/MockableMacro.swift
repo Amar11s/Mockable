@@ -24,20 +24,30 @@ public struct MockableMacro: PeerMacro {
 
             // -------- FUNCTIONS --------
             if let funcDecl = member.decl.as(FunctionDeclSyntax.self) {
-                let functionName = funcDecl.name.text
+                let baseName = funcDecl.name.text
+
+                let paramNames: [String] = funcDecl.signature.parameterClause.parameters.compactMap {
+                    $0.firstName.text
+                }
+
+                let overloadSuffix = paramNames.isEmpty
+                    ? ""
+                    : "_" + paramNames.joined(separator: "_")
+
+                let functionName = baseName + overloadSuffix
                 let signature = funcDecl.signature
+
                 let returnType = signature.returnClause?.type.description
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
                 methodEnumCases.append("case \(functionName)")
-
                 generatedMembers.append("var \(functionName)CallCount = 0")
 
                 if let returnType = returnType {
                     generatedMembers.append("var \(functionName)ReturnValue: \(returnType)?")
 
                     generatedMembers.append("""
-                    func \(functionName)\(signature.description) {
+                    func \(baseName)\(signature.description) {
                         \(functionName)CallCount += 1
                         if let value = \(functionName)ReturnValue {
                             return value
@@ -52,7 +62,7 @@ public struct MockableMacro: PeerMacro {
                     """)
                 } else {
                     generatedMembers.append("""
-                    func \(functionName)\(signature.description) {
+                    func \(baseName)\(signature.description) {
                         \(functionName)CallCount += 1
                     }
                     """)
@@ -68,6 +78,7 @@ public struct MockableMacro: PeerMacro {
                     actual = self.\(functionName)CallCount
                 """)
             }
+
 
             // -------- PROPERTIES --------
             if let varDecl = member.decl.as(VariableDeclSyntax.self),
