@@ -21,56 +21,101 @@ public struct MockableMacro: PeerMacro {
         var methodEnumCases: [String] = []
 
         for member in protocolDecl.memberBlock.members {
-            guard let funcDecl = member.decl.as(FunctionDeclSyntax.self) else {
-                continue
-            }
 
-            let functionName = funcDecl.name.text
-            let signature = funcDecl.signature
+            // -------- FUNCTIONS --------
+            if let funcDecl = member.decl.as(FunctionDeclSyntax.self) {
+                let functionName = funcDecl.name.text
+                let signature = funcDecl.signature
+                let returnType = signature.returnClause?.type.description
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
 
-            let returnType = signature.returnClause?.type.description
-                .trimmingCharacters(in: .whitespacesAndNewlines)
+                methodEnumCases.append("case \(functionName)")
 
-            // enum case
-            methodEnumCases.append("case \(functionName)")
+                generatedMembers.append("var \(functionName)CallCount = 0")
 
-            // call tracking
-            generatedMembers.append("var \(functionName)CallCount = 0")
+                if let returnType = returnType {
+                    generatedMembers.append("var \(functionName)ReturnValue: \(returnType)?")
 
-            if let returnType = returnType {
-                generatedMembers.append("var \(functionName)ReturnValue: \(returnType)?")
-
-                generatedMembers.append("""
-                func \(functionName)\(signature.description) {
-                    \(functionName)CallCount += 1
-                    if let value = \(functionName)ReturnValue {
-                        return value
+                    generatedMembers.append("""
+                    func \(functionName)\(signature.description) {
+                        \(functionName)CallCount += 1
+                        if let value = \(functionName)ReturnValue {
+                            return value
+                        }
+                        fatalError("No stub for \(functionName)")
                     }
-                    fatalError("No stub for \(functionName)")
-                }
-                """)
+                    """)
 
-                givenCases.append("""
-                case .\(functionName):
-                    self.\(functionName)ReturnValue = value as? \(returnType)
-                """)
-            } else {
-                generatedMembers.append("""
-                func \(functionName)\(signature.description) {
-                    \(functionName)CallCount += 1
-                }
-                """)
+                    givenCases.append("""
+                    case .\(functionName):
+                        self.\(functionName)ReturnValue = value as? \(returnType)
+                    """)
+                } else {
+                    generatedMembers.append("""
+                    func \(functionName)\(signature.description) {
+                        \(functionName)CallCount += 1
+                    }
+                    """)
 
-                givenCases.append("""
+                    givenCases.append("""
+                    case .\(functionName):
+                        break
+                    """)
+                }
+
+                verifyCases.append("""
                 case .\(functionName):
-                    break
+                    actual = self.\(functionName)CallCount
                 """)
             }
 
-            verifyCases.append("""
-            case .\(functionName):
-                actual = self.\(functionName)CallCount
-            """)
+            // -------- PROPERTIES --------
+            if let varDecl = member.decl.as(VariableDeclSyntax.self),
+               let binding = varDecl.bindings.first,
+               let identifier = binding.pattern.as(IdentifierPatternSyntax.self),
+               let type = binding.typeAnnotation?.type.description
+            {
+                let propertyName = identifier.identifier.text
+                let propertyType = type.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                methodEnumCases.append("case get_\(propertyName)")
+                methodEnumCases.append("case set_\(propertyName)")
+
+                generatedMembers.append("var \(propertyName)GetCallCount = 0")
+                generatedMembers.append("var \(propertyName)SetCallCount = 0")
+                generatedMembers.append("var _\(propertyName): \(propertyType)?")
+
+                generatedMembers.append("""
+                var \(propertyName): \(propertyType) {
+                    get {
+                        \(propertyName)GetCallCount += 1
+                        if let value = _\(propertyName) {
+                            return value
+                        }
+                        fatalError("No stub for property \(propertyName)")
+                    }
+                    set {
+                        \(propertyName)SetCallCount += 1
+                        _\(propertyName) = newValue
+                    }
+                }
+                """)
+
+                givenCases.append("""
+                case .get_\(propertyName):
+                    self._\(propertyName) = value as? \(propertyType)
+                """)
+
+                verifyCases.append("""
+                case .get_\(propertyName):
+                    actual = self.\(propertyName)GetCallCount
+                """)
+
+                verifyCases.append("""
+                case .set_\(propertyName):
+                    actual = self.\(propertyName)SetCallCount
+                """)
+            }
         }
 
         let enumBlock = """
@@ -83,6 +128,8 @@ public struct MockableMacro: PeerMacro {
         func given<T>(_ method: Method, willReturn value: T) {
             switch method {
             \(givenCases.joined(separator: "\n"))
+            default:
+                break
             }
         }
         """
@@ -92,6 +139,8 @@ public struct MockableMacro: PeerMacro {
             var actual = 0
             switch method {
             \(verifyCases.joined(separator: "\n"))
+            default:
+                break
             }
             if actual != expected {
                 fatalError("Verify failed: expected \\(expected) calls, got \\(actual)")
