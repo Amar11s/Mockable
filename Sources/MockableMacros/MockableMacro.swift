@@ -323,11 +323,15 @@ public struct MockableMacro: PeerMacro {
             }
 
             // -------- PROPERTIES --------
-            if let varDecl = member.decl.as(VariableDeclSyntax.self),
-               let binding = varDecl.bindings.first,
-               let identifier = binding.pattern.as(IdentifierPatternSyntax.self),
-               let type = binding.typeAnnotation?.type.description
-            {
+            if let varDecl = member.decl.as(VariableDeclSyntax.self) {
+                // Skip variable declarations that don't have proper bindings
+                // like `let _: FeatureToggle` which has no identifier pattern
+                guard let binding = varDecl.bindings.first,
+                      let identifier = binding.pattern.as(IdentifierPatternSyntax.self),
+                      let type = binding.typeAnnotation?.type.description else {
+                    continue
+                }
+                
                 let propertyName = identifier.identifier.text
                 let capitalizedPropertyName = capitalizeFirstLetter(propertyName)
                 let propertyType = type.trimmingCharacters(in: .whitespacesAndNewlines)
