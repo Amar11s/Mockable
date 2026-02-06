@@ -1,24 +1,18 @@
 import Mockable
 
+
 @Mockable
 protocol UserService {
     var username: String { get set }
-    func fetchUser() -> String
-    func fetchUser(completion: @escaping (String) -> Void)
-}
+    func fetchUser(name:String) -> String
+    func fetchUser(noname:Int) -> String
 
+}
 
 let mock = MockUserService()
 
-mock.given(.get_username, willReturn: "Alice")
-mock.given(.fe, willReturn: <#T##T#>)
+mock.given(.get_username, willReturn: "john")
 
-print(mock.username)
-
-mock.username = "Bob"
+print( mock.username)
 
 mock.verify(.get_username, count: 1)
-mock.verify(.set_username, count: 1)
-
-print("property verify passed")
-
