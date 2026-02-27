@@ -221,7 +221,7 @@ public struct MockableMacro: PeerMacro {
                 verifyMethodCases.append("case \(getCase)")
                 verifyMethodCases.append("case \(setCase)")
 
-                // 🆕 FIX: helper for verify
+                // helper for verify
                 verifyHelperFunctions.append("""
                 static func \(getCase)() -> VerifyMethod { .\(getCase) }
                 """)
@@ -276,7 +276,7 @@ public struct MockableMacro: PeerMacro {
                     }.count
                 """)
             }
-        } // 🛠 FIXED: missing brace
+        } 
 
         let methodEnumBlock = """
         enum Method {
