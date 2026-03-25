@@ -5,7 +5,7 @@ import Mockable
 protocol UserService {
     var username: String { get set }
     func fetchUser(name:String) -> String
-    func fetchUser(noname:Int) -> String
+    func fetchUser(name:Int) -> String
 
 }
 
