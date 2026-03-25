@@ -12,5 +12,5 @@ protocol UserService {
 let mock = MockUserService()
 
 mock.username = "test"
-mock.given(.fetchUser_String(name: .any, willReturn: "Hi"))
-print(mock.fetchUser(user: "Hjhgfghji"))
+mock.given(.fetchUser_String(name: "", willReturn: "Hi"))
+print(mock.fetchUser(user: ""))

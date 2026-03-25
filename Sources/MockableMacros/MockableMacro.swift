@@ -63,7 +63,7 @@ public struct MockableMacro: PeerMacro {
             return params.map {
                 let name = paramDisplayName($0)
                 let type = paramType($0)
-                return "\(name): Parameter<\(type)>"
+                return "\(name): \(type)"
             }.joined(separator: ", ")
         }
 
@@ -71,7 +71,7 @@ public struct MockableMacro: PeerMacro {
             return params.map {
                 let name = paramDisplayName($0)
                 let type = paramType($0)
-                return "let \(name): Parameter<\(type)>"
+                return "let \(name): \(type)"
             }.joined(separator: "\n")
         }
 
@@ -80,7 +80,7 @@ public struct MockableMacro: PeerMacro {
 
             return params.map {
                 let name = paramDisplayName($0)
-                return "stub.\(name).matches(\(name))"
+                return "stub.\(name) == \(name)"
             }.joined(separator: " && ")
         }
 
