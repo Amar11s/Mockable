@@ -98,10 +98,8 @@ public struct MockableMacro: PeerMacro {
                 let type = param.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
 
                 if let second = second {
-                    // e.g. func foo(a b: Int)
                     return "\(first) \(second): \(type)"
                 } else {
-                    // e.g. func foo(x: Int) OR func foo(_ x: Int)
                     return "\(first): \(type)"
                 }
             }.joined(separator: ", ")
@@ -138,20 +136,8 @@ public struct MockableMacro: PeerMacro {
                     methodEnumCases.append("""
                     case \(functionName)(
                         \(paramList)\(paramList.isEmpty ? "" : ",")
-                        returnValue: \(returnType)
-                    )
-                    """)
-
-                    methodEnumCases.append("""
-                    static func \(baseName)(
-                        \(paramList)\(paramList.isEmpty ? "" : ",")
                         willReturn: \(returnType)
-                    ) -> Method {
-                        .\(functionName)(
-                            \(callArgs)\(callArgs.isEmpty ? "" : ",")
-                            returnValue: willReturn
-                        )
-                    }
+                    )
                     """)
 
                     generatedMembers.append("""
@@ -177,18 +163,18 @@ public struct MockableMacro: PeerMacro {
                     }
                     """)
 
+                    // 🔴 CHANGE 1: returnValue → willReturn (pattern + usage)
                     givenCases.append("""
-                    case .\(functionName)(\(parameters.map { "let \(paramDisplayName($0))" }.joined(separator: ", ")), let returnValue):
+                    case .\(functionName)(\(parameters.map { "let \(paramDisplayName($0))" }.joined(separator: ", ")), let willReturn):
                         \(functionName)Stubs.append(
                             \(functionName)Stub(
                                 \(callArgs),
-                                returnValue: returnValue
+                                returnValue: willReturn
                             )
                         )
                     """)
 
                 } else {
-                    // -------- NO RETURN --------
                     methodEnumCases.append("case \(functionName)")
 
                     generatedMembers.append("""
@@ -240,14 +226,11 @@ public struct MockableMacro: PeerMacro {
                     }
                 }
                 """)
-                
+
+                // 🔴 CHANGE 2: remove usage of `value`
                 givenCases.append("""
                 case .get_\(propertyName):
-                    if let value = value as? \(propertyType) {
-                        self._\(propertyName) = value
-                    } else {
-                        fatalError("Type mismatch for property \(propertyName)")
-                    }
+                    fatalError("Use direct assignment for property \(propertyName)")
                 """)
 
                 verifyCases.append("""
@@ -270,8 +253,9 @@ public struct MockableMacro: PeerMacro {
         }
         """
 
+        // 🔴 CHANGE 3: removed generic + external willReturn
         let givenFunction = """
-        func given<T>(_ method: Method, willReturn value: T) {
+        func given(_ method: Method) {
             switch method {
             \(givenCases.joined(separator: "\n"))
             default:

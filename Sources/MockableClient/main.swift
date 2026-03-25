@@ -4,15 +4,13 @@ import Mockable
 @Mockable
 protocol UserService {
     var username: String { get set }
-    func fetchUser(name: String) -> String
+    func fetchUser(user name: String) -> String
     func fetchUser(name:Int) -> String
 
 }
 
 let mock = MockUserService()
 
-mock.given(.get_username, willReturn: "john")
-
-print( mock.username)
-
-mock.verify(.get_username, count: 1)
+mock.username = "test"
+mock.given(.fetchUser_String(name: .any, willReturn: "Hi"))
+print(mock.fetchUser(user: "Hjhgfghji"))
