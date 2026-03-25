@@ -3,6 +3,7 @@ import SwiftSyntaxMacros
 import Foundation
 
 public struct MockableMacro: PeerMacro {
+
     public static func expansion(
         of node: AttributeSyntax,
         providingPeersOf declaration: some DeclSyntaxProtocol,
@@ -20,10 +21,93 @@ public struct MockableMacro: PeerMacro {
         var givenCases: [String] = []
         var verifyCases: [String] = []
         var methodEnumCases: [String] = []
-        var helperFunctions: [String] = []
 
-        var verifyMethodCases: [String] = []
-        var verifyHelperFunctions: [String] = []
+        // MARK: - Helpers
+
+        func normalizeType(_ type: String) -> String {
+            return type
+                .replacingOccurrences(of: " ", with: "")
+                .replacingOccurrences(of: "?", with: "Optional")
+                .replacingOccurrences(of: "!", with: "IUO")
+                .replacingOccurrences(of: "[", with: "ArrayOf")
+                .replacingOccurrences(of: "]", with: "")
+                .replacingOccurrences(of: "(", with: "")
+                .replacingOccurrences(of: ")", with: "")
+                .replacingOccurrences(of: "->", with: "To")
+                .replacingOccurrences(of: ",", with: "_")
+                .replacingOccurrences(of: ":", with: "_")
+        }
+
+        func paramDisplayName(_ param: FunctionParameterSyntax) -> String {
+            if let second = param.secondName {
+                return second.text
+            }
+            return param.firstName.text == "_" ? "param" : param.firstName.text
+        }
+
+        func paramType(_ param: FunctionParameterSyntax) -> String {
+            return param.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        func buildSignatureSuffix(_ params: [FunctionParameterSyntax]) -> String {
+            if params.isEmpty { return "" }
+
+            let parts = params.map {
+                normalizeType(paramType($0))
+            }
+
+            return "_" + parts.joined(separator: "_")
+        }
+
+        func buildParamList(_ params: [FunctionParameterSyntax]) -> String {
+            return params.map {
+                let name = paramDisplayName($0)
+                let type = paramType($0)
+                return "\(name): Parameter<\(type)>"
+            }.joined(separator: ", ")
+        }
+
+        func buildStubStructParams(_ params: [FunctionParameterSyntax]) -> String {
+            return params.map {
+                let name = paramDisplayName($0)
+                let type = paramType($0)
+                return "let \(name): Parameter<\(type)>"
+            }.joined(separator: "\n")
+        }
+
+        func buildStubMatchCondition(_ params: [FunctionParameterSyntax]) -> String {
+            if params.isEmpty { return "true" }
+
+            return params.map {
+                let name = paramDisplayName($0)
+                return "stub.\(name).matches(\(name))"
+            }.joined(separator: " && ")
+        }
+
+        func buildCallArgs(_ params: [FunctionParameterSyntax]) -> String {
+            return params.map {
+                let name = paramDisplayName($0)
+                return "\(name): \(name)"
+            }.joined(separator: ", ")
+        }
+
+        func buildParamDecl(_ params: [FunctionParameterSyntax]) -> String {
+            return params.map { param in
+                let first = param.firstName.text
+                let second = param.secondName?.text
+                let type = param.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
+
+                if let second = second {
+                    // e.g. func foo(a b: Int)
+                    return "\(first) \(second): \(type)"
+                } else {
+                    // e.g. func foo(x: Int) OR func foo(_ x: Int)
+                    return "\(first): \(type)"
+                }
+            }.joined(separator: ", ")
+        }
+
+        // MARK: - Iterate Members
 
         for member in protocolDecl.memberBlock.members {
 
@@ -32,171 +116,97 @@ public struct MockableMacro: PeerMacro {
 
                 let baseName = funcDecl.name.text
                 let signature = funcDecl.signature
-                let parameters = signature.parameterClause.parameters
+                let parameters = Array(signature.parameterClause.parameters)
 
-                let paramNames: [String] = parameters.compactMap {
-                    $0.firstName.text
-                }
-
-                let overloadSuffix = paramNames.isEmpty
-                    ? ""
-                    : "_" + paramNames.joined(separator: "_")
-
-                let functionName = baseName + overloadSuffix
+                let suffix = buildSignatureSuffix(parameters)
+                let functionName = baseName + suffix
 
                 let returnType = signature.returnClause?.type.description
                     .trimmingCharacters(in: .whitespacesAndNewlines)
 
                 generatedMembers.append("var \(functionName)CallCount = 0")
 
-                if let returnType = returnType {
+                let paramList = buildParamList(parameters)
+                let stubParams = buildStubStructParams(parameters)
+                let matchCondition = buildStubMatchCondition(parameters)
+                let callArgs = buildCallArgs(parameters)
+                let paramDecl = buildParamDecl(parameters)
 
-                    if parameters.isEmpty {
+                // -------- WITH RETURN --------
+                if let returnType = returnType, returnType != "Void" {
 
-                        methodEnumCases.append("case \(functionName)(returnValue: \(returnType))")
-                        methodEnumCases.append("case \(functionName)_invocation")
+                    methodEnumCases.append("""
+                    case \(functionName)(
+                        \(paramList)\(paramList.isEmpty ? "" : ",")
+                        returnValue: \(returnType)
+                    )
+                    """)
 
-                        helperFunctions.append("""
-                        static func \(baseName)(willReturn: \(returnType)) -> Method {
-                            .\(functionName)(returnValue: willReturn)
-                        }
-                        """)
-
-                        verifyMethodCases.append("case \(functionName)")
-
-                        verifyHelperFunctions.append("""
-                        static func \(baseName)() -> VerifyMethod {
-                            .\(functionName)
-                        }
-                        """)
-
-                        generatedMembers.append("""
-                        struct \(functionName)Stub {
-                            let returnValue: \(returnType)
-                        }
-                        """)
-
-                        generatedMembers.append("var \(functionName)Stubs: [\(functionName)Stub] = []")
-
-                        generatedMembers.append("""
-                        func \(baseName)\(signature.description) {
-                            \(functionName)CallCount += 1
-                            invocations.append(.\(functionName)_invocation)
-
-                            if let stub = \(functionName)Stubs.first {
-                                return stub.returnValue
-                            }
-                            fatalError("No stub for \(functionName)")
-                        }
-                        """)
-
-                        givenCases.append("""
-                        case .\(functionName)(let returnValue):
-                            \(functionName)Stubs.append(\(functionName)Stub(returnValue: returnValue))
-                        """)
-
-                        verifyCases.append("""
-                        case .\(functionName):
-                            actual = invocations.filter {
-                                if case .\(functionName)_invocation = $0 { return true }
-                                return false
-                            }.count
-                        """)
-
-                    } else {
-
-                        let param = parameters.first!
-                        let paramName = param.firstName.text
-                        let paramType = param.type.description.trimmingCharacters(in: .whitespacesAndNewlines)
-
-                        methodEnumCases.append("""
-                        case \(functionName)(\(paramName): Parameter<\(paramType)>, returnValue: \(returnType))
-                        """)
-                        methodEnumCases.append("case \(functionName)_invocation(\(paramName): \(paramType))")
-
-                        helperFunctions.append("""
-                        static func \(baseName)(\(paramName): Parameter<\(paramType)>, willReturn: \(returnType)) -> Method {
-                            .\(functionName)(\(paramName): \(paramName), returnValue: willReturn)
-                        }
-                        """)
-
-                        verifyMethodCases.append("case \(functionName)(\(paramName): Parameter<\(paramType)>)")
-
-                        verifyHelperFunctions.append("""
-                        static func \(baseName)(\(paramName): Parameter<\(paramType)>) -> VerifyMethod {
-                            .\(functionName)(\(paramName): \(paramName))
-                        }
-                        """)
-
-                        generatedMembers.append("""
-                        struct \(functionName)Stub {
-                            let \(paramName): Parameter<\(paramType)>
-                            let returnValue: \(returnType)
-                        }
-                        """)
-
-                        generatedMembers.append("var \(functionName)Stubs: [\(functionName)Stub] = []")
-
-                        generatedMembers.append("""
-                        func \(baseName)\(signature.description) {
-                            \(functionName)CallCount += 1
-                            invocations.append(.\(functionName)_invocation(\(paramName): \(paramName)))
-
-                            for stub in \(functionName)Stubs {
-                                if stub.\(paramName).matches(\(paramName)) {
-                                    return stub.returnValue
-                                }
-                            }
-                            fatalError("No stub for \(functionName)")
-                        }
-                        """)
-
-                        givenCases.append("""
-                        case .\(functionName)(let \(paramName), let returnValue):
-                            \(functionName)Stubs.append(\(functionName)Stub(\(paramName): \(paramName), returnValue: returnValue))
-                        """)
-
-                        verifyCases.append("""
-                        case .\(functionName)(let expectedParam):
-                            actual = invocations.filter {
-                                if case .\(functionName)_invocation(let actualParam) = $0 {
-                                    return expectedParam.matches(actualParam)
-                                }
-                                return false
-                            }.count
-                        """)
-                    }
-
-                } else {
-
-                    methodEnumCases.append("case \(functionName)")
-                    methodEnumCases.append("case \(functionName)_invocation")
-
-                    verifyMethodCases.append("case \(functionName)")
-
-                    verifyHelperFunctions.append("""
-                    static func \(baseName)() -> VerifyMethod {
-                        .\(functionName)
+                    methodEnumCases.append("""
+                    static func \(baseName)(
+                        \(paramList)\(paramList.isEmpty ? "" : ",")
+                        willReturn: \(returnType)
+                    ) -> Method {
+                        .\(functionName)(
+                            \(callArgs)\(callArgs.isEmpty ? "" : ",")
+                            returnValue: willReturn
+                        )
                     }
                     """)
 
                     generatedMembers.append("""
-                    func \(baseName)\(signature.description) {
-                        \(functionName)CallCount += 1
-                        invocations.append(.\(functionName)_invocation)
+                    struct \(functionName)Stub {
+                    \(stubParams)
+                    let returnValue: \(returnType)
                     }
                     """)
 
-                    givenCases.append("case .\(functionName): break")
+                    generatedMembers.append("""
+                    var \(functionName)Stubs: [\(functionName)Stub] = []
+                    """)
 
-                    verifyCases.append("""
+                    generatedMembers.append("""
+                    func \(baseName)(\(paramDecl)) -> \(returnType) {
+                        \(functionName)CallCount += 1
+                        for stub in \(functionName)Stubs {
+                            if \(matchCondition) {
+                                return stub.returnValue
+                            }
+                        }
+                        fatalError("No stub for \(functionName)")
+                    }
+                    """)
+
+                    givenCases.append("""
+                    case .\(functionName)(\(parameters.map { "let \(paramDisplayName($0))" }.joined(separator: ", ")), let returnValue):
+                        \(functionName)Stubs.append(
+                            \(functionName)Stub(
+                                \(callArgs),
+                                returnValue: returnValue
+                            )
+                        )
+                    """)
+
+                } else {
+                    // -------- NO RETURN --------
+                    methodEnumCases.append("case \(functionName)")
+
+                    generatedMembers.append("""
+                    func \(baseName)(\(paramDecl)) {
+                        \(functionName)CallCount += 1
+                    }
+                    """)
+
+                    givenCases.append("""
                     case .\(functionName):
-                        actual = invocations.filter {
-                            if case .\(functionName)_invocation = $0 { return true }
-                            return false
-                        }.count
+                        break
                     """)
                 }
+
+                verifyCases.append("""
+                case .\(functionName):
+                    actual = self.\(functionName)CallCount
+                """)
             }
 
             // -------- PROPERTIES --------
@@ -208,29 +218,8 @@ public struct MockableMacro: PeerMacro {
                 let propertyName = identifier.identifier.text
                 let propertyType = type.trimmingCharacters(in: .whitespacesAndNewlines)
 
-                let capitalized = propertyName.prefix(1).uppercased() + propertyName.dropFirst()
-
-                let getCase = "get\(capitalized)"
-                let setCase = "set\(capitalized)"
-
-                methodEnumCases.append("case \(getCase)(returnValue: \(propertyType))")
-                methodEnumCases.append("case \(setCase)")
-                methodEnumCases.append("case \(getCase)_invocation")
-                methodEnumCases.append("case \(setCase)_invocation")
-
-                verifyMethodCases.append("case \(getCase)")
-                verifyMethodCases.append("case \(setCase)")
-
-                // helper for verify
-                verifyHelperFunctions.append("""
-                static func \(getCase)() -> VerifyMethod { .\(getCase) }
-                """)
-
-                helperFunctions.append("""
-                static func \(getCase)(willReturn: \(propertyType)) -> Method {
-                    .\(getCase)(returnValue: willReturn)
-                }
-                """)
+                methodEnumCases.append("case get_\(propertyName)")
+                methodEnumCases.append("case set_\(propertyName)")
 
                 generatedMembers.append("var \(propertyName)GetCallCount = 0")
                 generatedMembers.append("var \(propertyName)SetCallCount = 0")
@@ -240,8 +229,6 @@ public struct MockableMacro: PeerMacro {
                 var \(propertyName): \(propertyType) {
                     get {
                         \(propertyName)GetCallCount += 1
-                        invocations.append(.\(getCase)_invocation)
-
                         if let value = _\(propertyName) {
                             return value
                         }
@@ -249,69 +236,60 @@ public struct MockableMacro: PeerMacro {
                     }
                     set {
                         \(propertyName)SetCallCount += 1
-                        invocations.append(.\(setCase)_invocation)
                         _\(propertyName) = newValue
                     }
                 }
                 """)
-
+                
                 givenCases.append("""
-                case .\(getCase)(let returnValue):
-                    self._\(propertyName) = returnValue
+                case .get_\(propertyName):
+                    if let value = value as? \(propertyType) {
+                        self._\(propertyName) = value
+                    } else {
+                        fatalError("Type mismatch for property \(propertyName)")
+                    }
                 """)
 
                 verifyCases.append("""
-                case .\(getCase):
-                    actual = invocations.filter {
-                        if case .\(getCase)_invocation = $0 { return true }
-                        return false
-                    }.count
+                case .get_\(propertyName):
+                    actual = self.\(propertyName)GetCallCount
                 """)
 
                 verifyCases.append("""
-                case .\(setCase):
-                    actual = invocations.filter {
-                        if case .\(setCase)_invocation = $0 { return true }
-                        return false
-                    }.count
+                case .set_\(propertyName):
+                    actual = self.\(propertyName)SetCallCount
                 """)
             }
-        } 
+        }
 
-        let methodEnumBlock = """
+        // MARK: - Final Assembly
+
+        let enumBlock = """
         enum Method {
         \(methodEnumCases.joined(separator: "\n"))
-        \(helperFunctions.joined(separator: "\n"))
-        }
-        """
-
-        let verifyEnumBlock = """
-        enum VerifyMethod {
-        \(verifyMethodCases.joined(separator: "\n"))
-        \(verifyHelperFunctions.joined(separator: "\n"))
         }
         """
 
         let givenFunction = """
-        func given(_ method: Method) {
+        func given<T>(_ method: Method, willReturn value: T) {
             switch method {
             \(givenCases.joined(separator: "\n"))
-            default: break
+            default:
+                break
             }
         }
         """
 
         let verifyFunction = """
-        func verify(_ method: VerifyMethod, count expected: Int) {
-            let actual: Int
-
+        func verify(_ method: Method, count expected: Int) {
+            var actual = 0
             switch method {
             \(verifyCases.joined(separator: "\n"))
-            default: actual = 0
+            default:
+                break
             }
-
             if actual != expected {
-                fatalError("Verify failed: expected \\(expected) calls, got \\(actual)")
+                fatalError("Verify failed: expected \\(expected), got \\(actual)")
             }
         }
         """
@@ -319,11 +297,7 @@ public struct MockableMacro: PeerMacro {
         let mockClass = """
         final class \(mockName): \(protocolName) {
 
-        \(methodEnumBlock)
-
-        \(verifyEnumBlock)
-
-        var invocations: [Method] = []
+        \(enumBlock)
 
         \(generatedMembers.joined(separator: "\n\n"))
 
